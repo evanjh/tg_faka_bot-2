@@ -41,11 +41,11 @@ def submit(money, name, trade_id):
             }
             return return_data
         else:
-            pay_url = API + re.search(r"\.\/(.*)\'", content).group(1)
+            pay_url = API + re.search(r"\.?\/(.*)\'", content).group(1)
             print(pay_url)
             return_data = {
                 'status': 'Success',
-                'type': 'url',  # qrcode
+                'type': 'url',  # url
                 'data': pay_url
             }
             return return_data
