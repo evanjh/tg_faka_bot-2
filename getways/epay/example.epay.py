@@ -9,7 +9,7 @@ API = 'https://baidu.com/'
 ID = 1041
 # 商户密钥
 KEY = 'm6KM7yP6L213125XmZ7QwwFKwYkm1BK'
-# 支付成功跳转链接
+# 支付成功跳转链接。
 JUMP_URL = "https://baidu.com"
 
 
