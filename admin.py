@@ -1,3 +1,6 @@
+import datetime
+import threading
+
 import telegram
 from telegram import InlineKeyboardMarkup, InlineKeyboardButton, ForceReply
 from telegram.ext import CommandHandler, MessageHandler, Filters, ConversationHandler, CallbackQueryHandler
@@ -10,7 +13,7 @@ import requests
 
 ADMIN_ROUTE, ADMIN_CATEGORY_ROUTE, CATEGORY_FUNC_EXEC, ADMIN_GOODS_ROUTE, \
 ADMIN_GOODS_STEP1, ADMIN_GOODS_STEP2, ADMIN_CARD_ROUTE, ADMIN_TRADE_ROUTE, \
-ADMIN_CARD_STEP1, ADMIN_CARD_STEP2, ADMIN_TRADE_EXEC, ADMIN_MARKETING_ROUTE,\
+ADMIN_CARD_STEP1, ADMIN_CARD_STEP2, ADMIN_TRADE_EXEC, ADMIN_MARKETING_ROUTE, \
 ADMIN_MARKETING_EXEC = range(13)
 bot = telegram.Bot(token=TOKEN)
 
@@ -96,6 +99,7 @@ def admin_entry_route(update, context):
              InlineKeyboardButton("重新激活订单", callback_data=str('重新激活订单'))],
             [InlineKeyboardButton("取消所有未支付订单", callback_data=str('取消所有未支付订单')),
              InlineKeyboardButton("删除所有非未支付订单", callback_data=str('删除所有非未支付订单'))],
+            [InlineKeyboardButton("导出订单", callback_data=str('导出订单'))]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         query.edit_message_text(
@@ -115,7 +119,8 @@ def admin_entry_route(update, context):
         return ADMIN_MARKETING_ROUTE
     elif update.callback_query.data == '更新':
         try:
-            newest_version = requests.get('https://raw.githubusercontent.com/devourbots/tg_faka_bot/master/update/version', timeout=3).text
+            newest_version = requests.get(
+                'https://raw.githubusercontent.com/devourbots/tg_faka_bot/master/update/version', timeout=3).text
         except Exception as e:
             print(e)
             print('最新版本获取失败，请检测服务器与GitHub的连通性！')
@@ -574,6 +579,40 @@ def card_func_route(update, context):
         context.user_data['func'] = '导出卡密'
         query.edit_message_text(text='请选择需要操作的分类：', reply_markup=reply_markup)
         return ADMIN_CARD_STEP1
+    elif update.callback_query.data == '导出全部卡密':
+        conn = sqlite3.connect('faka.sqlite3')
+        cursor = conn.cursor()
+        cursor.execute("select * from category")
+        category_list = cursor.fetchall()
+        try:
+            for category in category_list:
+                category_name = category[1]
+                cursor.execute("select * from goods where category_name = ?", (category_name,))
+                goods_list = cursor.fetchall()
+                for goods in goods_list:
+                    goods_name = goods[2]
+                    goods_id = goods[0]
+                    cursor.execute("select * from cards where goods_id=?", (goods_id,))
+                    cards_list = cursor.fetchall()
+                    if len(cards_list) == 0:
+                        continue
+                    else:
+                        new_file = open('./card/导出卡密｜{}｜{}.txt'.format(category_name, goods_name), 'w')
+                        for card in cards_list:
+                            context = card[3]
+                            new_file.write(context + '\n')
+                        new_file.close()
+                        chat_id = query.message.chat.id
+                        bot.send_document(chat_id=chat_id, document=open(
+                            './card/导出卡密｜{}｜{}.txt'.format(category_name, goods_name), 'rb'))
+                        os.remove('./card/导出卡密｜{}｜{}.txt'.format(category_name, goods_name))
+            query.edit_message_text(text="全部卡密已经导出")
+        except Exception as e:
+            print(e)
+            query.edit_message_text(text="全部卡密导出失败，请进入控制台查看报错信息")
+        finally:
+            conn.close()
+            return ConversationHandler.END
 
 
 def card_func_step1(update, context):
@@ -767,6 +806,19 @@ def trade_func_route(update, context):
             parse_mode='Markdown'
         )
         return ADMIN_TRADE_EXEC
+    elif update.callback_query.data == '导出订单':
+        context.user_data['func'] = '导出订单'
+        keyboard = [
+            InlineKeyboardButton("导出当日订单", callback_data=str('导出当日订单')),
+            InlineKeyboardButton("导出昨日订单", callback_data=str('导出昨日订单')),
+            InlineKeyboardButton("导出全部订单", callback_data=str('导出全部订单')),
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        query.edit_message_text(
+            text="请选择订单导出时间段：",
+            reply_markup=reply_markup,
+        )
+        return ADMIN_TRADE_EXEC
 
 
 def itimeout(update, context):
@@ -885,6 +937,78 @@ def trade_func_sql_clean(update, context):
         print(e)
 
 
+def trade_export(update, context):
+    try:
+        query = update.callback_query
+        query.answer()
+        if update.callback_query.data == '导出当日订单':
+            zero_time = int(time.mktime(datetime.date.today().timetuple()))
+            print(zero_time)
+            conn = sqlite3.connect('faka.sqlite3')
+            cursor = conn.cursor()
+            cursor.execute("select * from trade order by creat_time desc")
+            trade_list = cursor.fetchall()
+            conn.close()
+            new_file = open('./card/当日订单.txt', 'w')
+            new_file.write("\n")
+            for trade in trade_list:
+                if int(trade[9]) > zero_time:
+                    new_file.write(format_trade(trade) + '\n')
+            new_file.close()
+            chat_id = update.effective_chat.id
+            bot.send_document(chat_id=chat_id, document=open('./card/当日订单.txt', 'rb'))
+            os.remove('./card/当日订单.txt')
+            context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text='当日订单导出成功',
+            )
+            return ConversationHandler.END
+        elif update.callback_query.data == '导出昨日订单':
+            zero_time = int(time.mktime(datetime.date.today().timetuple()))
+            print(zero_time)
+            time1 = zero_time - 86400
+            conn = sqlite3.connect('faka.sqlite3')
+            cursor = conn.cursor()
+            cursor.execute("select * from trade order by creat_time desc")
+            trade_list = cursor.fetchall()
+            conn.close()
+            new_file = open('./card/昨日订单.txt', 'w')
+            new_file.write("\n")
+            for trade in trade_list:
+                if time1 < int(trade[9]) < zero_time:
+                    new_file.write(format_trade(trade) + '\n')
+            new_file.close()
+            chat_id = update.effective_chat.id
+            bot.send_document(chat_id=chat_id, document=open('./card/昨日订单.txt', 'rb'))
+            os.remove('./card/昨日订单.txt')
+            context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text='昨日订单导出成功',
+            )
+            return ConversationHandler.END
+        elif update.callback_query.data == '导出全部订单':
+            conn = sqlite3.connect('faka.sqlite3')
+            cursor = conn.cursor()
+            cursor.execute("select * from trade order by creat_time desc")
+            trade_list = cursor.fetchall()
+            conn.close()
+            new_file = open('./card/全部订单.txt', 'w')
+            new_file.write("\n")
+            for trade in trade_list:
+                new_file.write(format_trade(trade) + '\n')
+            new_file.close()
+            chat_id = update.effective_chat.id
+            bot.send_document(chat_id=chat_id, document=open('./card/全部订单.txt', 'rb'))
+            os.remove('./card/全部订单.txt')
+            context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text='全部订单导出成功',
+            )
+            return ConversationHandler.END
+    except Exception as e:
+        print(e)
+
+
 def marketing_route(update, context):
     try:
         print('进入 marketing_route 函数')
@@ -967,11 +1091,36 @@ def marketing_func_send_message_getinput(update, context):
         print(e)
 
 
+def send_message_thread(content, user_list, admin_id):
+    try:
+        for j in user_list:
+            try:
+                bot.send_message(
+                    chat_id=j,
+                    text=content,
+                    parse_mode='Markdown',
+                )
+                time.sleep(5)
+            except Exception as e:
+                print(e)
+                print('信息发送失败，可能该用户已经停用bot')
+        bot.send_message(
+            chat_id=admin_id,
+            text="消息发送完毕，群发人数：{}\n".format(len(user_list))
+        )
+    except Exception as e:
+        print(e)
+        bot.send_message(
+            chat_id=admin_id,
+            text="消息发送失败\n"
+        )
+
+
 def marketing_func_send_message_comfirm(update, context):
     try:
         query = update.callback_query
         query.answer()
-        user_id = update.effective_user.id
+        admin_user_id = update.effective_user.id
         func = context.user_data['func']
         choose_target = context.user_data['choose_target']
         message_content = context.user_data['message_content']
@@ -986,7 +1135,7 @@ def marketing_func_send_message_comfirm(update, context):
             # print(user_list)
             if len(user_list) == 0:
                 bot.send_message(
-                    chat_id=user_id,
+                    chat_id=admin_user_id,
                     text="无已下单并支付用户"
                 )
             else:
@@ -996,19 +1145,12 @@ def marketing_func_send_message_comfirm(update, context):
                     if user_id not in filtered_user_list:
                         filtered_user_list.append(user_id)
                 # print(filtered_user_list)
-                for j in filtered_user_list:
-                    try:
-                        bot.send_message(
-                            chat_id=j,
-                            text=message_content,
-                            parse_mode='Markdown',
-                        )
-                    except Exception as e:
-                        print(e)
-                        print('信息发送失败，可能该用户已经停用bot')
+                args = (message_content, filtered_user_list, admin_user_id)
+                threading.Thread(target=send_message_thread, args=args).start()
+                time.sleep(0.5)
                 bot.send_message(
-                    chat_id=user_id,
-                    text="消息群发成功\n"
+                    chat_id=admin_user_id,
+                    text="消息将在后台陆续发送，发送完毕您将会收到提醒\n"
                 )
         elif choose_target == '已下单未支付用户':
             conn = sqlite3.connect('faka.sqlite3')
@@ -1020,7 +1162,7 @@ def marketing_func_send_message_comfirm(update, context):
             # print(user_list)
             if len(user_list) == 0:
                 bot.send_message(
-                    chat_id=user_id,
+                    chat_id=admin_user_id,
                     text="无已下单未支付用户"
                 )
             else:
@@ -1030,19 +1172,12 @@ def marketing_func_send_message_comfirm(update, context):
                     if user_id not in filtered_user_list:
                         filtered_user_list.append(user_id)
                 # print(filtered_user_list)
-                for j in filtered_user_list:
-                    try:
-                        bot.send_message(
-                            chat_id=j,
-                            text=message_content,
-                            parse_mode='Markdown',
-                        )
-                    except Exception as e:
-                        print(e)
-                        print('信息发送失败，可能该用户已经停用bot')
+                args = (message_content, filtered_user_list, admin_user_id)
+                threading.Thread(target=send_message_thread, args=args).start()
+                time.sleep(0.5)
                 bot.send_message(
-                    chat_id=user_id,
-                    text="消息群发成功\n"
+                    chat_id=admin_user_id,
+                    text="消息将在后台陆续发送，发送完毕您将会收到提醒\n"
                 )
         elif choose_target == '所有已下单用户':
             conn = sqlite3.connect('faka.sqlite3')
@@ -1054,7 +1189,7 @@ def marketing_func_send_message_comfirm(update, context):
             # print(user_list)
             if len(user_list) == 0:
                 bot.send_message(
-                    chat_id=user_id,
+                    chat_id=admin_user_id,
                     text="无已下单未支付用户"
                 )
             else:
@@ -1064,23 +1199,27 @@ def marketing_func_send_message_comfirm(update, context):
                     if user_id not in filtered_user_list:
                         filtered_user_list.append(user_id)
                 # print(filtered_user_list)
-                for j in filtered_user_list:
-                    try:
-                        bot.send_message(
-                            chat_id=j,
-                            text=message_content,
-                            parse_mode='Markdown',
-                        )
-                    except Exception as e:
-                        print(e)
-                        print('信息发送失败，可能该用户已经停用bot')
+                args = (message_content, filtered_user_list, admin_user_id)
+                threading.Thread(target=send_message_thread, args=args).start()
+                time.sleep(0.5)
                 bot.send_message(
-                    chat_id=user_id,
-                    text="消息群发成功\n"
+                    chat_id=admin_user_id,
+                    text="消息将在后台陆续发送，发送完毕您将会收到提醒\n"
                 )
         return ConversationHandler.END
     except Exception as e:
         print(e)
+
+
+def format_trade(trade):
+    out_str = ""
+    out_str += "订单号：" + str(trade[0]) + "\t\t"
+    out_str += "商品名：" + str(trade[2]) + "\t\t"
+    out_str += "卡密内容：" + str(trade[6]) + "\t\t"
+    out_str += "用户ID：" + str(trade[7]) + "\t\t"
+    out_str += "用户名：@" + str(trade[8]) + "\t\t"
+    out_str += "创建时间：" + str(datetime.datetime.fromtimestamp(int(trade[9]))) + "\t"
+    return out_str
 
 
 def is_admin(update, context):
@@ -1140,7 +1279,7 @@ admin_handler = ConversationHandler(
         ],
         ADMIN_CARD_ROUTE: [
             CommandHandler(ADMIN_COMMAND_START, admin),
-            CallbackQueryHandler(card_func_route, pattern='^' + '(添加卡密|删除卡密|导出卡密)' + '$'),
+            CallbackQueryHandler(card_func_route, pattern='^' + '(添加卡密|删除卡密|导出卡密|导出全部卡密)' + '$'),
         ],
         ADMIN_CARD_STEP1: [
             CommandHandler(ADMIN_COMMAND_START, admin),
@@ -1155,12 +1294,14 @@ admin_handler = ConversationHandler(
         ],
         ADMIN_TRADE_ROUTE: [
             CommandHandler(ADMIN_COMMAND_START, admin),
-            CallbackQueryHandler(trade_func_route, pattern='^' + '(查询订单|重新激活订单|取消所有未支付订单|删除所有非未支付订单)' + '$'),
+            CallbackQueryHandler(trade_func_route,
+                                 pattern='^' + '(查询订单|重新激活订单|取消所有未支付订单|删除所有非未支付订单|导出订单)' + '$'),
         ],
         ADMIN_TRADE_EXEC: [
             CommandHandler(ADMIN_COMMAND_START, admin),
             MessageHandler(Filters.text, admin_trade_func_exec),
             CallbackQueryHandler(trade_func_sql_clean, pattern='^' + '(确认取消|确认删除)' + '$'),
+            CallbackQueryHandler(trade_export, pattern='^' + '(导出当日订单|导出昨日订单|导出全部订单)' + '$'),
         ],
         ADMIN_MARKETING_ROUTE: [
             CommandHandler(ADMIN_COMMAND_START, admin),
