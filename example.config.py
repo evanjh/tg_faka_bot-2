@@ -1,4 +1,3 @@
-
 # 支付超时时间(秒)
 PAY_TIMEOUT = 300
 # BOT API
