@@ -10,6 +10,9 @@ def run_bot():
 
     dispatcher.add_handler(start_handler)
     dispatcher.add_handler(admin_handler)
+    dispatcher.add_handler(contect_handler)
+    dispatcher.add_handler(qna_handler)
+    dispatcher.add_handler(help_handler)
 
     updater.start_polling()
     updater.idle()
