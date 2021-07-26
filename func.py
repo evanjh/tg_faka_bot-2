@@ -1,7 +1,7 @@
 from telegram.ext import Updater
 from config import TOKEN
 from admin import admin_handler
-from user import start_handler
+from user import start_handler, contect_handler, qna_handler, help_handler
 
 
 def run_bot():
